@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Advanced Snake Game</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        background: linear-gradient(to right, #000000, #1a1a1a);
+        color: white;
+        font-family: "Segoe UI", sans-serif;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      canvas {
+        border: 4px solid #00ff66;
+        background-color: #111;
+        box-shadow: 0 0 25px #00ff66, 0 0 40px #00ff66 inset;
+      }
+
+      h1 {
+        margin-bottom: 20px;
+        font-size: 28px;
+        color: #00ff66;
+        text-shadow: 0 0 10px #00ff66;
+      }
+
+      .game-ui {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        background: rgba(0, 0, 0, 0.8);
+        padding: 15px;
+        border: 2px solid #00ff66;
+        border-radius: 10px;
+      }
+
+      .menu {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(0, 0, 0, 0.9);
+        padding: 20px;
+        border-radius: 10px;
+        text-align: center;
+        border: 2px solid #00ff66;
+      }
+
+      .menu button {
+        background: #00ff66;
+        border: none;
+        padding: 10px 20px;
+        margin: 10px;
+        color: black;
+        font-weight: bold;
+        border-radius: 5px;
+        cursor: pointer;
+        transition: all 0.3s;
+      }
+
+      .menu button:hover {
+        transform: scale(1.1);
+        box-shadow: 0 0 15px #00ff66;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>🐍 Advanced Snake Game</h1>
+    <canvas id="gameCanvas" width="600" height="600"></canvas>
+
+    <script>
+      const canvas = document.getElementById("gameCanvas");
+      const ctx = canvas.getContext("2d");
+
+      // Game constants
+      const unitSize = 25;
+      const rows = canvas.height / unitSize;
+      const cols = canvas.width / unitSize;
+
+      // Game state
+      let snake = [{ x: unitSize * 4, y: unitSize * 4 }];
+      let direction = "RIGHT";
+      let pendingDirection = "RIGHT";
+      let foods = [];
+      let powerUps = [];
+      let particles = [];
+      let score = 0;
+      let highScore = localStorage.getItem("snakeHighScore") || 0;
+      let level = 1;
+      let gameSpeed = 100;
+      let gameInterval;
+      let gameState = "menu"; // menu, playing, paused, gameOver
+
+      // Sound effects
+      const sounds = {
+        eat: new Audio("data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YU"),
+        gameOver: new Audio("data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YU"),
+        powerUp: new Audio("data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YU")
+      };
+
+      // Food types
+      const foodTypes = {
+        normal: { color: "#ff3333", points: 1, radius: unitSize / 2 },
+        special: { color: "#ffff00", points: 3, radius: unitSize / 2.5 },
+        bonus: { color: "#ff00ff", points: 5, radius: unitSize / 3 }
+      };
+
+      // Power-up types
+      const powerUpTypes = {
+        speed: { color: "#00ffff", duration: 5000, effect: () => setGameSpeed(gameSpeed * 0.7) },
+        points: { color: "#ff8800", duration: 5000, effect: () => score += 5 },
+        invincible: { color: "#ffffff", duration: 3000, effect: () => snake.invincible = true }
+      };
+
+      class Particle {
+        constructor(x, y, color) {
+          this.x = x;
+          this.y = y;
+          this.color = color;
+          this.size = Math.random() * 3 + 2;
+          this.speedX = (Math.random() - 0.5) * 6;
+          this.speedY = (Math.random() - 0.5) * 6;
+          this.life = 1;
+        }
+
+        update() {
+          this.x += this.speedX;
+          this.y += this.speedY;
+          this.life -= 0.02;
+          this.size *= 0.95;
+        }
+
+        draw() {
+          ctx.fillStyle = this.color;
+          ctx.globalAlpha = this.life;
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+      }
+
+      // Event Listeners
+      document.addEventListener("keydown", handleKeyPress);
+
+      function handleKeyPress(e) {
+        if (gameState === "playing") {
+          switch(e.key) {
+            case "ArrowUp":
+              if (direction !== "DOWN") pendingDirection = "UP";
+              break;
+            case "ArrowDown":
+              if (direction !== "UP") pendingDirection = "DOWN";
+              break;
+            case "ArrowLeft":
+              if (direction !== "RIGHT") pendingDirection = "LEFT";
+              break;
+            case "ArrowRight":
+              if (direction !== "LEFT") pendingDirection = "RIGHT";
+              break;
+            case "p":
+              pauseGame();
+              break;
+          }
+        } else if (gameState === "menu" && e.key === "Enter") {
+          startGame();
+        } else if (gameState === "paused" && e.key === "p") {
+          resumeGame();
+        }
+      }
+
+      function createMenu() {
+        const menu = document.createElement("div");
+        menu.className = "menu";
+        menu.innerHTML = `
+          <h2>Snake Game</h2>
+          <p>High Score: ${highScore}</p>
+          <button onclick="startGame()">Start Game</button>
+          <p>Use arrow keys to move<br>Press P to pause</p>
+        `;
+        document.body.appendChild(menu);
+        return menu;
+      }
+
+      function startGame() {
+        document.querySelector(".menu")?.remove();
+        resetGame();
+        gameState = "playing";
+        gameInterval = setInterval(gameLoop, gameSpeed);
+      }
+
+      function pauseGame() {
+        if (gameState === "playing") {
+          gameState = "paused";
+          clearInterval(gameInterval);
+          showPauseMenu();
+        }
+      }
+
+      function resumeGame() {
+        document.querySelector(".menu")?.remove();
+        gameState = "playing";
+        gameInterval = setInterval(gameLoop, gameSpeed);
+      }
+
+      function resetGame() {
+        snake = [{ x: unitSize * 4, y: unitSize * 4 }];
+        direction = "RIGHT";
+        pendingDirection = "RIGHT";
+        foods = [createFood("normal")];
+        powerUps = [];
+        particles = [];
+        score = 0;
+        level = 1;
+        gameSpeed = 100;
+      }
+
+      function gameLoop() {
+        clearCanvas();
+        drawGrid();
+        updateParticles();
+        updatePowerUps();
+        updateFoods();
+        moveSnake();
+        drawSnake();
+        drawUI();
+        checkCollision();
+      }
+
+      function clearCanvas() {
+        ctx.fillStyle = "#111";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+
+      function drawGrid() {
+        ctx.strokeStyle = "#222";
+        for (let i = 0; i < rows; i++) {
+          ctx.beginPath();
+          ctx.moveTo(0, i * unitSize);
+          ctx.lineTo(canvas.width, i * unitSize);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(i * unitSize, 0);
+          ctx.lineTo(i * unitSize, canvas.height);
+          ctx.stroke();
+        }
+      }
+
+      function createFood(type) {
+        const position = getEmptyPosition();
+        return {
+          ...foodTypes[type],
+          x: position.x,
+          y: position.y,
+          type
+        };
+      }
+
+      function createPowerUp() {
+        const position = getEmptyPosition();
+        const type = Object.keys(powerUpTypes)[Math.floor(Math.random() * Object.keys(powerUpTypes).length)];
+        return {
+          ...powerUpTypes[type],
+          x: position.x,
+          y: position.y,
+          type
+        };
+      }
+
+      function getEmptyPosition() {
+        let position;
+        do {
+          position = {
+            x: Math.floor(Math.random() * cols) * unitSize,
+            y: Math.floor(Math.random() * rows) * unitSize
+          };
+        } while (isPositionOccupied(position));
+        return position;
+      }
+
+      function isPositionOccupied(position) {
+        return snake.some(segment => segment.x === position.x && segment.y === position.y) ||
+               foods.some(food => food.x === position.x && food.y === position.y) ||
+               powerUps.some(powerUp => powerUp.x === position.x && powerUp.y === position.y);
+      }
+
+      function updateParticles() {
+        particles = particles.filter(particle => particle.life > 0);
+        particles.forEach(particle => {
+          particle.update();
+          particle.draw();
+        });
+      }
+
+      function updatePowerUps() {
+        if (Math.random() < 0.002 && powerUps.length < 1) {
+          powerUps.push(createPowerUp());
+        }
+
+        powerUps.forEach(powerUp => {
+          ctx.fillStyle = powerUp.color;
+          ctx.beginPath();
+          ctx.arc(powerUp.x + unitSize/2, powerUp.y + unitSize/2, unitSize/3, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+
+      function updateFoods() {
+        if (foods.length < 1) {
+          const type = Math.random() < 0.7 ? "normal" : 
+                      Math.random() < 0.85 ? "special" : "bonus";
+          foods.push(createFood(type));
+        }
+
+        foods.forEach(food => {
+          ctx.fillStyle = food.color;
+          ctx.beginPath();
+          ctx.arc(food.x + unitSize/2, food.y + unitSize/2, food.radius, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+
+      function moveSnake() {
+        direction = pendingDirection;
+        const head = { ...snake[0] };
+
+        switch (direction) {
+          case "UP": head.y -= unitSize; break;
+          case "DOWN": head.y += unitSize; break;
+          case "LEFT": head.x -= unitSize; break;
+          case "RIGHT": head.x += unitSize; break;
+        }
+
+        snake.unshift(head);
+
+        // Check food collision
+        const foodIndex = foods.findIndex(food => head.x === food.x && head.y === food.y);
+        if (foodIndex !== -1) {
+          const food = foods[foodIndex];
+          score += food.points;
+          sounds.eat.play();
+          createParticles(head.x, head.y, food.color);
+          foods.splice(foodIndex, 1);
+          checkLevelUp();
+        } else {
+          snake.pop();
+        }
+
+        // Check power-up collision
+        const powerUpIndex = powerUps.findIndex(powerUp => head.x === powerUp.x && head.y === powerUp.y);
+        if (powerUpIndex !== -1) {
+          const powerUp = powerUps[powerUpIndex];
+          sounds.powerUp.play();
+          powerUp.effect();
+          createParticles(head.x, head.y, powerUp.color);
+          powerUps.splice(powerUpIndex, 1);
+          setTimeout(() => {
+            if (powerUp.type === "speed") setGameSpeed(gameSpeed / 0.7);
+            if (powerUp.type === "invincible") snake.invincible = false;
+          }, powerUp.duration);
+        }
+      }
+
+      function createParticles(x, y, color) {
+        for (let i = 0; i < 15; i++) {
+          particles.push(new Particle(x + unitSize/2, y + unitSize/2, color));
+        }
+      }
+
+      function drawSnake() {
+        snake.forEach((segment, i) => {
+          ctx.fillStyle = i === 0 ? "#00ff66" : "#33ff99";
+          if (snake.invincible) {
+            ctx.fillStyle = `hsl(${Date.now() / 10 % 360}, 100%, 50%)`;
+          }
+          ctx.shadowColor = "#00ff66";
+          ctx.shadowBlur = 10;
+          ctx.fillRect(segment.x, segment.y, unitSize, unitSize);
+        });
+        ctx.shadowBlur = 0;
+      }
+
+      function drawUI() {
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "20px Arial";
+        ctx.fillText(`Score: ${score}`, 10, 30);
+        ctx.fillText(`High Score: ${highScore}`, 10, 60);
+        ctx.fillText(`Level: ${level}`, 10, 90);
+      }
+
+      function checkLevelUp() {
+        if (score > level * 10) {
+          level++;
+          setGameSpeed(gameSpeed * 0.9);
+        }
+      }
+
+      function setGameSpeed(speed) {
+        gameSpeed = speed;
+        clearInterval(gameInterval);
+        gameInterval = setInterval(gameLoop, gameSpeed);
+      }
+
+      function checkCollision() {
+        const head = snake[0];
+
+        if (!snake.invincible) {
+          // Wall collision
+          if (head.x < 0 || head.x >= canvas.width || head.y < 0 || head.y >= canvas.height) {
+            gameOver();
+            return;
+          }
+
+          // Self collision
+          for (let i = 1; i < snake.length; i++) {
+            if (head.x === snake[i].x && head.y === snake[i].y) {
+              gameOver();
+              return;
+            }
+          }
+        }
+      }
+
+      function gameOver() {
+        sounds.gameOver.play();
+        clearInterval(gameInterval);
+        gameState = "gameOver";
+        
+        if (score > highScore) {
+          highScore = score;
+          localStorage.setItem("snakeHighScore", highScore);
+        }
+
+        const menu = document.createElement("div");
+        menu.className = "menu";
+        menu.innerHTML = `
+          <h2>Game Over!</h2>
+          <p>Score: ${score}</p>
+          <p>High Score: ${highScore}</p>
+          <button onclick="startGame()">Play Again</button>
+        `;
+        document.body.appendChild(menu);
+      }
+
+      // Start with menu
+      createMenu();
+    </script>
+  </body>
+</html>
